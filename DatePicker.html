@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <label>Chọn tháng và năm:</label><br><br>
+    <input type="month" id="monthInput">
+    <br><br>
+    <button onclick="save()">Xác nhận</button>
+
+    <script>
+      function save() {
+        const value = document.getElementById('monthInput').value;
+        if (value) {
+          // value có dạng "2025-10" → ta chuyển thành "10/2025"
+          const [year, month] = value.split('-');
+          const formatted = month + '/' + year;
+
+          google.script.run.withSuccessHandler(() => {
+            google.script.host.close();
+          }).setDate(formatted);
+        }
+      }
+    </script>
+  </body>
+</html>
+
+

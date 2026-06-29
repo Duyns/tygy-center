@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+
+  <style>
+    body{
+      font-family: Arial, sans-serif;
+      padding:10px;
+    }
+
+    .student-row{
+      display:flex;
+      align-items:center;
+      margin-bottom:10px;
+      gap:10px;
+    }
+
+    .student-name{
+      flex:1;
+    }
+
+    select{
+      width:120px;
+    }
+
+    button{
+      width:100%;
+      margin-top:15px;
+      padding:10px;
+      cursor:pointer;
+    }
+    button.loading{
+    opacity: 0.9;
+    cursor: not-allowed;
+    }
+    .spinner{
+    display:inline-block;
+    animation:spin 1s linear infinite;
+    }
+
+    @keyframes spin{
+    from{transform:rotate(0deg);}
+    to{transform:rotate(360deg);}
+    }
+  </style>
+</head>
+
+<body>
+
+<h3 id="attendanceDate"></h3>
+
+<div id="studentList"></div>
+
+<button id="saveBtn" onclick="saveAttendance()">
+  Lưu điểm danh
+</button>
+
+<script>
+
+let students = <?!= JSON.stringify(attendanceData) ?>;
+let currentCell = "";
+let lastTs = <?!= JSON.stringify(initialTs) ?>;
+let intervalId;
+
+const teachers = [
+  "Thúy",
+  "Dương",
+  "Duy"
+];
+
+window.onload = () => {
+
+  loadHeader();
+
+  renderStudents();
+
+  if (intervalId) {
+    clearInterval(intervalId);
+  }
+
+  intervalId = setInterval(
+    watchSelection,
+    1000
+  );
+
+};
+
+function renderStudents() {
+
+  const container =
+    document.getElementById("studentList");
+
+  let html = "";
+
+  students.forEach((item, index) => {
+
+    const options = teachers.map(t => `
+      <option
+        value="${t}"
+        ${item.teacher === t ? "selected" : ""}
+      >
+        ${t}
+      </option>
+    `).join("");
+
+    html += `
+      <div class="student-row">
+
+        <div class="student-name">
+          ${item.student}
+        </div>
+
+        <input
+          type="checkbox"
+          id="att_${index}"
+          ${item.present ? "checked" : ""}
+        >
+
+        <select id="teacher_${index}">
+          <option value="">
+            Chọn GV
+          </option>
+          ${options}
+        </select>
+
+      </div>
+    `;
+  });
+
+  container.innerHTML = html;
+}
+
+function saveAttendance() {
+
+  const btn =
+    document.getElementById("saveBtn");
+
+  btn.disabled = true;
+  btn.classList.add("loading");
+  btn.innerHTML =
+  '<span class="spinner">⟳</span> Đang lưu...';
+
+  const result = [];
+
+  students.forEach((item, index) => {
+
+    result.push({
+      student: item.student,
+      present: document.getElementById(`att_${index}`).checked,
+      teacher: document.getElementById(`teacher_${index}`).value
+    });
+
+  });
+
+  google.script.run
+    .withSuccessHandler(() => {
+
+      btn.innerHTML = "✅ Đã lưu";
+
+      setTimeout(() => {
+
+        btn.disabled = false;
+        btn.classList.remove("loading");
+        btn.innerHTML = "Lưu điểm danh";
+
+      }, 1500);
+
+    })
+    .withFailureHandler(err => {
+
+      console.error(err);
+
+      btn.innerHTML = "❌ Lỗi";
+
+      setTimeout(() => {
+
+        btn.disabled = false;
+        btn.classList.remove("loading");
+        btn.innerHTML = "Lưu điểm danh";
+
+      }, 2000);
+
+    })
+    .saveAttendance(result);
+}
+
+function watchSelection() {
+
+  google.script.run
+    .withSuccessHandler(state => {
+
+      if (!state) return;
+
+      if (state.ts === lastTs) return;
+
+      console.log("Changed:", state.cell);
+
+      // Cập nhật NGAY
+      lastTs = state.ts;
+      currentCell = state.cell;
+
+      google.script.run
+        .withSuccessHandler(data => {
+
+          students = data;
+
+          loadHeader();
+
+          renderStudents();
+
+        })
+        .getAttendanceData();
+
+    })
+    .getCurrentSelectionState();
+
+}
+
+function loadHeader() {
+
+  google.script.run
+    .withSuccessHandler(data => {
+
+      document.getElementById("attendanceDate").textContent = data.date;
+
+    })
+    .getAttendanceHeader();
+
+}
+
+</script>
+
+</body>
+</html>
