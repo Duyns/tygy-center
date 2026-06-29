@@ -570,6 +570,7 @@ const SLOT_MAP = {
   "11:00": "9h30",
   "14:30": "13h",
   "16:00": "14h30",
+  "17:30": "16h",
   "19:00": "17h30",
   "20:30": "19h"
 };
@@ -1441,6 +1442,7 @@ function processPhieu(payload) {
 
   const phieuData = phieuSheet.getDataRange().getValues();
   const insData = insSheet.getDataRange().getValues();
+  const col = getHeaderMap(insSheet);
 
   const rows = phieuData.slice(1);
   const statusCol = 9; // I
@@ -1461,6 +1463,7 @@ function processPhieu(payload) {
   const loai = p[3];
   const ngayCu = new Date(p[4]);
   const ngayMoi = p[5] ? new Date(p[5]) : null;
+  const gioMoi = p[6] ? String(p[6]).trim() : "";
 
   let updated = false;
 
@@ -1477,18 +1480,54 @@ function processPhieu(payload) {
       updated = updateLessonStatus(instanceId, "OFF", "PHIEU") || updated;
     }
 
-    if (loai === "ĐỔI_LỊCH" && ngayMoi) {
+    if (loai === "ĐỔI LỊCH" && ngayMoi) {
 
-      insSheet.getRange(i + 2, 2).setValue(ngayMoi);
+  // OFF buổi cũ
+  updated = updateLessonStatus(instanceId, "OFF", "PHIEU") || updated;
 
-      updated = updateLessonStatus(instanceId, "ACTIVE", "PHIEU") || updated;
+  // Clone đúng dòng đang duyệt
+  const newRow = [...row];
+
+  const newDate = new Date(ngayMoi);
+
+  newRow[col["Ngày"]] = newDate;
+
+  const weekdayMap = [
+    "CN",
+    "T2",
+    "T3",
+    "T4",
+    "T5",
+    "T6",
+    "T7"
+  ];
+
+  newRow[col["Thứ"]] = weekdayMap[newDate.getDay()];
+
+  const dateKey = Utilities.formatDate(
+    newDate,
+    Session.getScriptTimeZone(),
+    "yyyyMMdd"
+  );
+
+  newRow[col["Giờ"]] = gioMoi;
+  const subject = newRow[col["Môn"]];
+  const student = newRow[col["Học viên"]];
+
+  newRow[col["InstanceID"]] =
+    `${dateKey}_${weekdayMap[newDate.getDay()]}_${gioMoi}_${subject}_${student}`;
+
+  newRow[col["Schedule_Status"]] = "ACTIVE";
+  newRow[col["Nguồn"]] = "PHIEU";
+
+  insSheet.appendRow(newRow);
     }
   }
 
   const resultStatus = updated ? "ĐÃ XỬ LÝ" : "LỖI";
 
   phieuSheet.getRange(phieuIndex + 2, statusCol).setValue(resultStatus);
-
+  hienThiLichHomNayNgayMai();
   return {
     success: updated,
     phieu_id: payload.phieu_id,
@@ -1609,10 +1648,11 @@ function scheduleTodayAttendance() {
       .create();
 
   });
+  hienThiLichHomNayNgayMai();
 
 }
 
-function autoAttendance() {
+function autoAttendance(testDate = null) {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -1625,7 +1665,7 @@ function autoAttendance() {
   // Xác định ca học từ thời điểm trigger
   //--------------------------------------------------
 
-  const now = new Date();
+  const now = testDate || new Date();
 
   const timeKey = Utilities.formatDate(
     now,
@@ -1738,6 +1778,29 @@ function autoAttendance() {
 
 }
 
+function getHeaderMap(sheet) {
+
+  const headers = sheet
+    .getRange(1, 1, 1, sheet.getLastColumn())
+    .getDisplayValues()[0];
+
+  const map = {};
+
+  headers.forEach((header, index) => {
+    map[header] = index;
+  });
+
+  return map;
+
+}
+
+// function test16h() {
+
+//   autoAttendance(
+//     new Date(2026, 5, 30, 17, 30)
+//   );
+
+// }
 
 
 
