@@ -49,6 +49,7 @@ function onEdit(e) {
     // --- Cột Trạng thái (G=7) ---
     if (col === 7 && row >= 2) {
       capNhatTrangThaiHocVien();
+      taoLessonInstance();
     }
     // --- Cột Tên ---
     if (col === 2 && row >=2) {
@@ -815,6 +816,7 @@ function saveAttendance(data) {
 
   });
 
+  tongHopDiemDanh();
 }
 
 function getAttendanceHeader() {
@@ -1372,25 +1374,32 @@ function hienThiLichHomNayNgayMai() {
 
 }
 
-function updateLessonStatus(instanceId, status, source = "PHIEU") {
+function updateLessonStatus(instanceId, status, source = "TKB") {
 
   const sheet = SpreadsheetApp.getActive()
     .getSheetByName("LESSON_INSTANCE");
 
+  const col = getHeaderMap(sheet);
+
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return false;
 
-  const data = sheet.getRange(2, 1, lastRow - 1, 8).getValues();
+  const data = sheet.getDataRange().getValues();
 
-  for (let i = 0; i < data.length; i++) {
+  for (let i = 1; i < data.length; i++) {
 
-    if (data[i][0] === instanceId) {
+    if (data[i][col["InstanceID"]] !== instanceId)
+      continue;
 
-      sheet.getRange(i + 2, 7).setValue(status);
-      sheet.getRange(i + 2, 8).setValue(source);
-      hienThiLichHomNayNgayMai();
-      return true;
-    }
+    sheet.getRange(i + 1, col["Schedule_Status"] + 1)
+      .setValue(status);
+
+    sheet.getRange(i + 1, col["Nguồn"] + 1)
+      .setValue(source);
+
+    hienThiLichHomNayNgayMai();
+
+    return true;
   }
 
   return false;
@@ -1404,6 +1413,14 @@ function doPost(e) {
     if (body.action === "processPhieu") {
 
       const result = processPhieu(body);
+
+      return ContentService
+        .createTextOutput(JSON.stringify(result))
+        .setMimeType(ContentService.MimeType.JSON);
+    }
+      if (body.action === "huyPhieu") {
+
+      const result = huyPhieu(body);
 
       return ContentService
         .createTextOutput(JSON.stringify(result))
@@ -1445,7 +1462,7 @@ function processPhieu(payload) {
   const col = getHeaderMap(insSheet);
 
   const rows = phieuData.slice(1);
-  const statusCol = 9; // I
+  const statusCol = 11; // K
 
   const phieuIndex = rows.findIndex(r => r[0] == payload.phieu_id);
 
@@ -1455,35 +1472,78 @@ function processPhieu(payload) {
 
   const p = rows[phieuIndex];
 
-  if (p[8] !== "MỚI") {
+  if (p[10] !== "MỚI") {
     return { success: false, message: "Phiếu không hợp lệ hoặc đã xử lý" };
   }
 
   const hv = p[2];
   const loai = p[3];
-  const ngayCu = new Date(p[4]);
-  const ngayMoi = p[5] ? new Date(p[5]) : null;
-  const gioMoi = p[6] ? String(p[6]).trim() : "";
-
+  const phamVi = p[4];
+  const ngayCu = new Date(p[5]);
+  const ngayMoi = p[6] ? new Date(p[6]) : null;
+  const gio = p[7] ? String(p[7]).trim() : "";
+  const toiNgay = p[8] ? new Date(p[8]) : null;
   let updated = false;
 
   for (let i = 1; i < insData.length; i++) {
 
     const row = insData[i];
-    if (row[5] !== hv) continue;
 
-    if (!sameDate(new Date(row[1]), ngayCu)) continue;
+  if (loai === "OFF") {
 
-    const instanceId = row[0];
+  if (phamVi === "CÁ NHÂN") {
 
-    if (loai === "OFF") {
-      updated = updateLessonStatus(instanceId, "OFF", "PHIEU") || updated;
-    }
+    if (row[col["Học viên"]] !== hv) continue;
+    const denNgay = toiNgay || ngayCu;
 
-    if (loai === "ĐỔI LỊCH" && ngayMoi) {
+      const lessonDate = new Date(row[col["Ngày"]]);
 
+      if (lessonDate < ngayCu) continue;
+
+      if (lessonDate > denNgay) continue;
+
+      updated =
+        updateLessonStatus(
+          row[col["InstanceID"]],
+          "OFF",
+          payload.phieu_id
+        ) || updated;
+  }
+
+  else if (phamVi === "CA HỌC") {
+
+    if (!sameDate(
+            new Date(row[col["Ngày"]]),
+            ngayCu
+          )) continue;
+
+      if (row[col["Giờ"]] !== gio) continue;
+
+      if (row[col["Schedule_Status"]] !== "ACTIVE")
+        continue;
+
+      updated =
+        updateLessonStatus(
+          row[col["InstanceID"]],
+          "OFF",
+          payload.phieu_id
+        ) || updated;
+
+  }
+
+}
+
+  if (loai === "ĐỔI LỊCH" && ngayMoi && gio) {
+    if (row[col["Học viên"]] !== hv) continue;
+    if (!sameDate(
+        new Date(row[col["Ngày"]]),
+        ngayCu
+      )) continue;
+
+    if (row[col["Schedule_Status"]] !== "ACTIVE")
+        continue;
   // OFF buổi cũ
-  updated = updateLessonStatus(instanceId, "OFF", "PHIEU") || updated;
+  updated = updateLessonStatus(row[col["InstanceID"]], "OFF", payload.phieu_id) || updated;
 
   // Clone đúng dòng đang duyệt
   const newRow = [...row];
@@ -1510,15 +1570,15 @@ function processPhieu(payload) {
     "yyyyMMdd"
   );
 
-  newRow[col["Giờ"]] = gioMoi;
+  newRow[col["Giờ"]] = gio;
   const subject = newRow[col["Môn"]];
   const student = newRow[col["Học viên"]];
 
   newRow[col["InstanceID"]] =
-    `${dateKey}_${weekdayMap[newDate.getDay()]}_${gioMoi}_${subject}_${student}`;
+    `${dateKey}_${weekdayMap[newDate.getDay()]}_${gio}_${subject}_${student}`;
 
   newRow[col["Schedule_Status"]] = "ACTIVE";
-  newRow[col["Nguồn"]] = "PHIEU";
+  newRow[col["Nguồn"]] = payload.phieu_id;
 
   insSheet.appendRow(newRow);
     }
@@ -1776,6 +1836,7 @@ function autoAttendance(testDate = null) {
     `AutoAttendance: ${targetSlot} - ${count} học viên`
   );
 
+  tongHopDiemDanh();
 }
 
 function getHeaderMap(sheet) {
@@ -1791,6 +1852,138 @@ function getHeaderMap(sheet) {
   });
 
   return map;
+
+}
+
+function huyPhieu(payload) {
+
+  const ss = SpreadsheetApp.getActive();
+
+  const lessonSheet = ss.getSheetByName("LESSON_INSTANCE");
+  const phieuSheet = ss.getSheetByName("PHIẾU LỊCH HỌC");
+
+  if (!payload?.phieu_id) {
+    return {
+      success: false,
+      message: "Missing phieu_id"
+    };
+  }
+
+  const lessonCol = getHeaderMap(lessonSheet);
+  const phieuCol = getHeaderMap(phieuSheet);
+
+  const lessonData = lessonSheet.getDataRange().getValues();
+  const phieuData = phieuSheet.getDataRange().getValues();
+
+  if (p[phieuCol["Trạng thái"]] !== "HUỶ") {
+    return {
+      success: false,
+      message: "Không phải yêu cầu hủy"
+    };
+}
+  //--------------------------------------------------
+  // Tìm phiếu
+  //--------------------------------------------------
+
+  let phieuRow = -1;
+  let loai = "";
+
+  for (let i = 1; i < phieuData.length; i++) {
+
+    if (phieuData[i][phieuCol["Phiếu ID"]] == payload.phieu_id) {
+
+      phieuRow = i + 1;
+      loai = phieuData[i][phieuCol["Loại phiếu"]];
+      break;
+
+    }
+  }
+
+  if (phieuRow === -1) {
+    return {
+      success: false,
+      message: "Không tìm thấy phiếu"
+    };
+  }
+
+  //--------------------------------------------------
+  // ĐỔI LỊCH
+  // Xóa instance mới
+  // ACTIVE lại instance cũ
+  //--------------------------------------------------
+
+  if (loai === "ĐỔI LỊCH") {
+
+    for (let i = lessonData.length - 1; i >= 1; i--) {
+
+      if (lessonData[i][lessonCol["Nguồn"]] != payload.phieu_id)
+        continue;
+
+      const status =
+        lessonData[i][lessonCol["Schedule_Status"]];
+
+      if (status === "ACTIVE") {
+
+        lessonSheet.deleteRow(i + 1);
+
+      } else {
+
+        lessonSheet.getRange(
+          i + 1,
+          lessonCol["Schedule_Status"] + 1
+        ).setValue("ACTIVE");
+
+        lessonSheet.getRange(
+          i + 1,
+          lessonCol["Nguồn"] + 1
+        ).setValue("TKB");
+
+      }
+
+    }
+
+  }
+
+  //--------------------------------------------------
+  // OFF
+  //--------------------------------------------------
+
+  else {
+
+    for (let i = 1; i < lessonData.length; i++) {
+
+      if (lessonData[i][lessonCol["Nguồn"]] != payload.phieu_id)
+        continue;
+
+      lessonSheet.getRange(
+        i + 1,
+        lessonCol["Schedule_Status"] + 1
+      ).setValue("ACTIVE");
+
+      lessonSheet.getRange(
+        i + 1,
+        lessonCol["Nguồn"] + 1
+      ).setValue("TKB");
+
+    }
+
+  }
+
+  //--------------------------------------------------
+  // Cập nhật trạng thái phiếu
+  //--------------------------------------------------
+
+  phieuSheet.getRange(
+    phieuRow,
+    phieuCol["Trạng thái"] + 1
+  ).setValue("ĐÃ HỦY");
+
+  hienThiLichHomNayNgayMai();
+
+  return {
+    success: true,
+    message: "Đã hủy phiếu"
+  };
 
 }
 
