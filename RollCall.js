@@ -6,6 +6,7 @@ function onOpen() {
   ui.createMenu("📅 Công cụ điểm danh")
     .addItem("Chọn tháng/năm", "showDatePicker")
     .addItem("Cập nhật thông tin học viên", "updateInfoData")
+    .addItem("Cập nhật TKB", "capNhatTKB")
     .addItem('Chọn lịch học cho học viên', 'openCalenderPopupForSelectedCell')
     .addItem('Điểm danh học viên', 'openAttendancePopupForSelectedCell')
     .addSeparator()
@@ -43,13 +44,10 @@ function onEdit(e) {
     // --- Cột Giờ học (F=6) ---
     if ((col === 6 && row >= 2) || (col === 7 && row >= 2)) {
       capNhatTKB();
-      taoLessonInstance();
-      hienThiLichHomNayNgayMai();
     }
     // --- Cột Trạng thái (G=7) ---
     if (col === 7 && row >= 2) {
       capNhatTrangThaiHocVien();
-      taoLessonInstance();
     }
     // --- Cột Tên ---
     if (col === 2 && row >=2) {
@@ -91,7 +89,7 @@ function updateInfoData() {
     if (lastRow < 2) return;
 
     // Lấy toàn bộ dữ liệu trong 1 lần
-    const data = sheet.getRange(3, 1, lastRow - 1, lastCol).getValues();
+    const data = sheet.getRange(3, 1, lastRow - 2, lastCol).getValues();
     const displayB = data.map(r => r[1]); // cột B hiển thị
 
     const formulas = [];
@@ -121,7 +119,7 @@ function updateInfoData() {
       .filter(r => r);
 
     if (rowsToClear.length > 0) {
-      sheet.getRange(3, 1, lastRow - 1, lastCol)
+      sheet.getRange(3, 1, lastRow - 2, lastCol)
            .setValues(
              data.map((row, i) =>
                displayB[i] !== "" ? row : Array(lastCol).fill("")
@@ -130,7 +128,7 @@ function updateInfoData() {
     }
     
     // Ghi công thức 1 lần
-    sheet.getRange(3, 1, sheet.getLastRow(), 5).clearContent();
+    sheet.getRange(3, 1, sheet.getLastRow(), 5).clearContent();   // 👈 XÓA CỘT A:E
     sheet.getRange(3, lastCol, formulas.length, 1).setFormulas(formulas);
   });
 
@@ -212,80 +210,176 @@ function fillDaysOfMonth(sheet) {
 }
 
 function tongHopDiemDanh(row = null, col = null, sheet = null) {
+
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const sheets = ss.getSheets();
+
   const targetSheet = ss.getSheetByName("TỔNG ĐIỂM DANH");
   const infoSheet = ss.getSheetByName("THÔNG TIN HỌC VIÊN");
+
   if (!targetSheet) return;
 
-  // Lấy dữ liệu thông tin học viên để biết số buổi còn lại
-  const infoValues = infoSheet.getRange(2, 1, infoSheet.getLastRow() - 1, 10).getValues();
-  const soBuoiMap = {}; // { "Tên học viên": số buổi còn lại }
+  //--------------------------------------------------
+  // Map Mã HV -> Số buổi
+  //--------------------------------------------------
 
-  infoValues.forEach(row => {
-    const ten = row[1];     // Cột B: Tên học viên
-    const soBuoi = row[7];  // Cột H: Số buổi còn lại
-    if (ten) {
-      soBuoiMap[ten] = Number(soBuoi) || 0;
+  const infoValues = infoSheet
+    .getRange(2, 1, infoSheet.getLastRow() - 1, 10)
+    .getValues();
+
+  const soBuoiMap = {};
+
+  infoValues.forEach(r => {
+
+    const ma = r[0];
+    const soBuoi = Number(r[7]) || 0;
+
+    if (ma) {
+      soBuoiMap[ma] = soBuoi;
     }
+
   });
-  if (sheet){
-    const tenHocVien = sheet.getRange(row, 2).getValue(); 
-    // ❌ Nếu hết buổi → bỏ qua buổi điểm danh
-    if (soBuoiMap[tenHocVien] < 1) {
+
+  //--------------------------------------------------
+  // Kiểm tra còn buổi học
+  //--------------------------------------------------
+
+  if (sheet) {
+
+    const maHV = sheet.getRange(row, 1).getValue();
+    const tenHocVien = sheet.getRange(row, 2).getValue();
+
+    if ((soBuoiMap[maHV] || 0) < 1) {
+
       sheet.getRange(row, col).clearContent();
-      SpreadsheetApp.getUi().alert(`Khóa học hiện tại của học viên ${tenHocVien} đã hết!`);
+
+      SpreadsheetApp.getUi().alert(
+        `Khóa học hiện tại của học viên ${tenHocVien} đã hết!`
+      );
+
       return;
+
     }
+
   }
 
-  // Lấy dữ liệu cũ (nếu có) để lấy tổng năm trước
-  const existingData = targetSheet.getLastRow() > 1
-    ? targetSheet.getRange(2, 1, targetSheet.getLastRow() - 1, 3).getValues()
-    : [];
+  //--------------------------------------------------
+  // Đọc dữ liệu cũ
+  //--------------------------------------------------
 
-  const previousMap = {}; // { "Tên học viên": tổng năm trước }
-  existingData.forEach(row => {
-    const name = row[0];
-    const prevTotal = Number(row[2]) || 0; // cột C: tổng năm trước
-    if (name) previousMap[name] = prevTotal;
+  const existingData =
+    targetSheet.getLastRow() > 1
+      ? targetSheet
+          .getRange(
+            2,
+            1,
+            targetSheet.getLastRow() - 1,
+            4
+          )
+          .getValues()
+      : [];
+
+  const previousMap = {};
+
+  existingData.forEach(r => {
+
+    const maHV = r[0];
+    const tongNamTruoc = Number(r[3]) || 0;
+
+    if (maHV) {
+      previousMap[maHV] = tongNamTruoc;
+    }
+
   });
 
-  const summaryMap = {}; // { "Tên học viên": tổng điểm năm nay }
+  //--------------------------------------------------
+  // Tổng hợp năm nay
+  //--------------------------------------------------
 
-  // Duyệt tất cả sheet "ĐIỂM DANH"
+  const summaryMap = {};
+  const tenMap = {};
+
   sheets.forEach(sheet => {
-    if (!sheet.getName().startsWith("ĐIỂM DANH")) return;
+
+    if (!sheet.getName().startsWith("ĐIỂM DANH"))
+      return;
 
     const data = sheet.getDataRange().getValues();
-    if (data.length <= 1) return; // sheet trống
 
-    const lastCol = data[0].length - 1; // cột cuối (cột Tổng)
-    const rows = data.slice(1); // bỏ tiêu đề
+    if (data.length <= 1)
+      return;
 
-    rows.forEach(r => {
-      const hocVien = r[1]; // cột B
+    const lastCol = data[0].length - 1;
+
+    data.slice(1).forEach(r => {
+
+      const maHV = r[0];
+      const ten = r[1];
       const diem = Number(r[lastCol]) || 0;
-      if (hocVien) summaryMap[hocVien] = (summaryMap[hocVien] || 0) + diem;
+
+      if (!maHV)
+        return;
+
+      tenMap[maHV] = ten;
+
+      summaryMap[maHV] =
+        (summaryMap[maHV] || 0) + diem;
+
     });
+
   });
 
-  // Chuẩn bị mảng 2D để ghi ra sheet, **cộng tổng năm trước vào tổng năm nay**
-  const allData = Object.entries(summaryMap).map(([hocVien, tongNamNay]) => {
-    const prev = previousMap[hocVien] || 0;
-    const tongCong = tongNamNay + prev; // tổng = năm nay + năm trước
-    return [hocVien, tongCong, prev]; // cột A: tên, B: tổng cộng, C: tổng năm trước
-  });
+  //--------------------------------------------------
+  // Chuẩn bị dữ liệu ghi
+  //--------------------------------------------------
 
-  // Xóa dữ liệu từ hàng 2 xuống (giữ tiêu đề)
-  if (targetSheet.getLastRow() > 1) {
-    targetSheet.getRange(2, 1, targetSheet.getLastRow() - 1, 3).clearContent();
-  }
+  const allData = Object.entries(summaryMap).map(
+    ([maHV, tongNamNay]) => {
 
+      const prev =
+        previousMap[maHV] || 0;
+
+      return [
+
+        maHV,
+        tenMap[maHV],
+        tongNamNay + prev,
+        prev
+
+      ];
+
+    });
+
+  //--------------------------------------------------
   // Ghi dữ liệu
-  if (allData.length > 0) {
-    targetSheet.getRange(2, 1, allData.length, 3).setValues(allData);
+  //--------------------------------------------------
+
+  if (targetSheet.getLastRow() > 1) {
+
+    targetSheet
+      .getRange(
+        2,
+        1,
+        targetSheet.getLastRow() - 1,
+        4
+      )
+      .clearContent();
+
   }
+
+  if (allData.length) {
+
+    targetSheet
+      .getRange(
+        2,
+        1,
+        allData.length,
+        4
+      )
+      .setValues(allData);
+
+  }
+
 }
 
 function sumConfigMatches() {
@@ -342,43 +436,56 @@ function capNhatTrangThaiHocVien() {
   const infoSheet = ss.getSheetByName("THÔNG TIN HỌC VIÊN");
   const sheets = ss.getSheets();
 
-  // Đọc danh sách học viên và trạng thái
-  const data = infoSheet.getRange("B2:G").getValues(); // B: Tên, C: ?, G: Trạng thái (sửa theo vị trí cột thật)
-  const students = data.filter(r => r[0] !== ""); // loại dòng trống
+  // Đọc danh sách học viên: A=Mã HV, B=Tên, ..., G=Trạng thái
+  const data = infoSheet.getRange("A2:G").getValues();
+  const students = data.filter(r => r[0] !== ""); // loại dòng trống (theo Mã HV)
+
+  const studentMap = new Map();
+  students.forEach(r => studentMap.set(String(r[0]).trim(), r));
 
   // Lặp qua tất cả các sheet có tên bắt đầu bằng "ĐIỂM DANH"
   sheets.forEach(sh => {
     const name = sh.getName();
-    if (name.startsWith("ĐIỂM DANH")) {
-      const names = sh.getRange("B2:B").getValues().map(r => r[0]); // cột chứa tên học viên ở sheet điểm danh
-      const lastCol = sh.getLastColumn(); // cột cuối (cột "Tổng")
-      const tongValues = sh.getRange(2, lastCol, names.length, 1).getValues(); // lấy giá trị cột tổng
-      sh.showRows(1, sh.getMaxRows()); // hiện tất cả trước (để đảm bảo không bị ẩn nhầm)
+    if (!name.startsWith("ĐIỂM DANH")) return;
 
-      // Lấy tháng trong ô F2 (ví dụ: 10, 11, 12)
-      const thangTrongSheet = parseInt(sh.getRange("F2").getValue(), 10);
-      const thangHienTai = new Date().getMonth() + 1; // tháng hiện tại (1-12)
-      const studentMap = new Map();
-      students.forEach(r => studentMap.set(r[0], r));
+    const ids = sh.getRange("A2:A")
+      .getValues()
+      .map(r => String(r[0]).trim()); // cột Mã HV ở sheet điểm danh
 
-      names.forEach((ten, i) => {
-        const info = studentMap.get(ten);
-        const tong = tongValues[i][0] || 0; // giá trị tổng (nếu trống thì = 0)
-        if (info) {
-          const trangThai = (info[5] || "").toString().trim();
-          // Điều kiện 1: nghỉ hoặc tạm nghỉ và tổng = 0
-          const dieuKienNghi = (trangThai === "Đã nghỉ" || trangThai === "Tạm nghỉ") && tong === 0;
+    const lastCol = sh.getLastColumn(); // cột cuối (cột "Tổng")
+    const tongValues = sh.getRange(2, lastCol, ids.length, 1).getValues();
 
-          // Điều kiện 2: đang học, tổng = 0, tháng hiện tại > tháng trong F2
-          const dieuKienHetThang = (trangThai === "Đang học") && tong === 0 && thangHienTai > thangTrongSheet;
+    sh.showRows(1, sh.getMaxRows()); // hiện tất cả trước
 
-          if (dieuKienNghi || dieuKienHetThang) {
-            sh.hideRows(i + 2); // i+2 vì dòng đầu là tiêu đề
-          }
+    const thangTrongSheet = parseInt(sh.getRange("F2").getValue(), 10);
+    const thangHienTai = new Date().getMonth() + 1;
+
+    ids.forEach((maHV, i) => {
+
+      if (!maHV) return;
+
+      const info = studentMap.get(maHV);
+      const tong = tongValues[i][0] || 0;
+
+      if (info) {
+
+        const trangThai = (info[6] || "").toString().trim(); // G = Trạng thái
+
+        const dieuKienNghi =
+          (trangThai === "Đã nghỉ" || trangThai === "Tạm nghỉ") && tong === 0;
+
+        const dieuKienHetThang =
+          (trangThai === "Đang học") && tong === 0 && thangHienTai > thangTrongSheet;
+
+        if (dieuKienNghi || dieuKienHetThang) {
+          sh.hideRows(i + 2);
         }
-      });
-    }
+      }
+    });
   });
+
+  taoLessonInstance();
+  hienThiLichHomNayNgayMai();
 }
 
 function capNhatTKB() {
@@ -440,6 +547,9 @@ function capNhatTKB() {
 
   // --- Ghi tất cả dữ liệu 1 lần ---
   tkbSheet.getRange(2, 3, output.length, 7).setValues(output);
+
+  taoLessonInstance();
+  hienThiLichHomNayNgayMai();
 }
 
 // --- Hàm lấy giá trị của ô merged ---
@@ -517,7 +627,7 @@ function openAttendancePopupForSelectedCell() {
     SpreadsheetApp.getUi().alert("Vui lòng chuyển sang sheet THỜI KHÓA BIỂU");
     return;
   }
-  if (cell.getColumn() < 3 || cell.getColumn() > 9 || cell.getRow() < 2 || cell.getRow() > 15) {
+  if (cell.getColumn() < 3 || cell.getColumn() > 9 || cell.getRow() < 2) {
     SpreadsheetApp.getUi().alert("Vui lòng chọn ca học");
     return;
   }
@@ -566,15 +676,34 @@ function getCurrentSelectionState() {
     : null;
 }
 
-const SLOT_MAP = {
-  "09:30": "8h",
-  "11:00": "9h30",
-  "14:30": "13h",
-  "16:00": "14h30",
-  "17:30": "16h",
-  "19:00": "17h30",
-  "20:30": "19h"
-};
+function getTargetSlot(now) {
+
+  const SLOT_MAP = [
+    { trigger: "09:30", slot: "8h" },
+    { trigger: "11:00", slot: "9h30" },
+    { trigger: "14:30", slot: "13h" },
+    { trigger: "16:00", slot: "14h30" },
+    { trigger: "17:30", slot: "16h" },
+    { trigger: "19:00", slot: "17h30" },
+    { trigger: "20:30", slot: "19h" }
+  ];
+
+  const current = now.getHours() * 60 + now.getMinutes();
+
+  for (const s of SLOT_MAP) {
+
+    const [h, m] = s.trigger.split(":").map(Number);
+    const trigger = h * 60 + m;
+
+    if (Math.abs(current - trigger) <= 20) {
+      return s.slot;
+    }
+
+  }
+
+  return null;
+
+}
 
 const SUBJECT_TEACHERS = {
   "Piano": "Thúy",
@@ -671,11 +800,31 @@ function getAttendanceData() {
 
   const dayColumn = 6 + context.day;
 
-  // Danh sách HV trong ô đang chọn
+  // Danh sách HV trong ô đang chọn (TKB vẫn hiển thị theo Tên)
   const names = context.state.value
     .split('\n')
     .map(s => s.replace(/^•\s*/, '').trim())
     .filter(Boolean);
+
+  //--------------------------------------------------
+  // Map Tên -> Mã HV (từ THÔNG TIN HỌC VIÊN)
+  //--------------------------------------------------
+
+  const infoSheet =
+    SpreadsheetApp.getActive()
+      .getSheetByName("THÔNG TIN HỌC VIÊN");
+
+  const infoData = infoSheet
+    .getRange(2, 1, infoSheet.getLastRow() - 1, 2)
+    .getValues();
+
+  const maHVMap = {};
+
+  infoData.forEach(r => {
+    const ma = String(r[0]).trim();
+    const ten = String(r[1]).trim();
+    if (ten) maHVMap[ten] = ma;
+  });
 
   // Lấy môn học từ cột B của TKB
   const tkbSheet =
@@ -703,24 +852,30 @@ function getAttendanceData() {
     defaultTeacher = "Dương";
   }
 
+  //--------------------------------------------------
+  // Map Mã HV -> dòng trong sheet điểm danh (cột A)
+  //--------------------------------------------------
+
   const lastRow =
     attendanceSheet.getLastRow();
 
-  const sheetStudents =
+  const sheetIds =
     attendanceSheet
-      .getRange(2, 2, lastRow - 1, 1)
+      .getRange(2, 1, lastRow - 1, 1)
       .getValues()
       .flat();
 
-  const studentMap = {};
+  const rowMap = {};
 
-  sheetStudents.forEach((name, index) => {
-    studentMap[name] = index + 2;
+  sheetIds.forEach((id, index) => {
+    if (id) rowMap[String(id).trim()] = index + 2;
   });
 
   return names.map(name => {
 
-    const row = studentMap[name];
+    const maHV = maHVMap[name];
+
+    const row = maHV ? rowMap[maHV] : null;
 
     if (!row) {
 
@@ -772,24 +927,56 @@ function saveAttendance(data) {
 
   const dayColumn = 6 + context.day;
 
+  //--------------------------------------------------
+  // Map Tên -> Mã HV (từ THÔNG TIN HỌC VIÊN)
+  //--------------------------------------------------
+
+  const infoSheet =
+    SpreadsheetApp.getActive()
+      .getSheetByName("THÔNG TIN HỌC VIÊN");
+
+  const infoData = infoSheet
+    .getRange(2, 1, infoSheet.getLastRow() - 1, 2)
+    .getValues();
+
+  const maHVMap = {};
+
+  infoData.forEach(r => {
+    const ma = String(r[0]).trim();
+    const ten = String(r[1]).trim();
+    if (ten) maHVMap[ten] = ma;
+  });
+
+  //--------------------------------------------------
+  // Map Mã HV -> dòng trong sheet điểm danh (cột A)
+  //--------------------------------------------------
+
   const lastRow =
     attendanceSheet.getLastRow();
 
-  const sheetStudents =
+  const sheetIds =
     attendanceSheet
-      .getRange(2, 2, lastRow - 1, 1)
+      .getRange(2, 1, lastRow - 1, 1)
       .getValues()
       .flat();
 
-  const studentMap = {};
+  const rowMap = {};
 
-  sheetStudents.forEach((name, index) => {
-    studentMap[name] = index + 2;
+  sheetIds.forEach((id, index) => {
+    if (id) rowMap[String(id).trim()] = index + 2;
   });
+
+  //--------------------------------------------------
+  // Ghi dữ liệu điểm danh
+  //--------------------------------------------------
 
   data.forEach(item => {
 
-    const row = studentMap[item.student];
+    const maHV = maHVMap[item.student];
+
+    if (!maHV) return;
+
+    const row = rowMap[maHV];
 
     if (!row) return;
 
@@ -804,8 +991,8 @@ function saveAttendance(data) {
       cell.clearContent();
       cell.setFontColor("#000000");
 
-    return;
-}
+      return;
+    }
 
     cell.setValue(1);
 
@@ -817,6 +1004,7 @@ function saveAttendance(data) {
   });
 
   tongHopDiemDanh();
+
 }
 
 function getAttendanceHeader() {
@@ -841,307 +1029,210 @@ function taoLessonInstance() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
-  const tkbSheet =
-    ss.getSheetByName("THỜI KHÓA BIỂU");
+  const tkbSheet = ss.getSheetByName("THỜI KHÓA BIỂU");
+  const insSheet = ss.getSheetByName("LESSON_INSTANCE");
+  const infoSheet = ss.getSheetByName("THÔNG TIN HỌC VIÊN");
 
-  const insSheet =
-    ss.getSheetByName("LESSON_INSTANCE");
+  if (!tkbSheet || !insSheet || !infoSheet) return;
 
+  const values = tkbSheet.getDataRange().getValues();
 
-  if (!tkbSheet || !insSheet) return;
+  //--------------------------------------------------
+  // Map Tên -> Mã HV
+  //--------------------------------------------------
 
+  const infoData = infoSheet
+    .getRange(2, 1, infoSheet.getLastRow() - 1, 2)
+    .getValues();
 
+  const maHVMap = {};
 
-  const values =
-    tkbSheet.getDataRange().getValues();
+  infoData.forEach(r => {
 
+    const ma = String(r[0]).trim();
+    const ten = String(r[1]).trim();
 
+    if (ten) maHVMap[ten] = ma;
 
-  // ============================
+  });
+
+  //--------------------------------------------------
   // Cache dữ liệu cũ
-  // ============================
+  //--------------------------------------------------
 
   const statusCache = {};
-
+  const customInstances = [];
 
   if (insSheet.getLastRow() > 1) {
 
-    const oldData =
-      insSheet.getRange(
-        2,
-        1,
-        insSheet.getLastRow()-1,
-        8
-      ).getValues();
+    const oldData = insSheet
+      .getRange(2, 1, insSheet.getLastRow() - 1, 9)
+      .getValues();
+  
+    const today = new Date();
+    today.setHours(0,0,0,0);
 
-
-
-    oldData.forEach(r=>{
+    
+    oldData.forEach(r => {
 
       const id = r[0];
 
-      if(id){
+      if (!id) return;
 
-        statusCache[id] = {
-
-          status: r[6],
-          source: r[7]
-
-        };
-
+      statusCache[id] = {
+        status: r[7],
+        source: r[8]
+      };
+      const lessonDate = new Date(r[1]);
+      if (r[8] !== "TKB" && lessonDate >= today) {
+        customInstances.push(r);
       }
 
     });
 
   }
 
-
-
-
-  // ============================
-  // Từ hôm nay -> 30 ngày
-  // ============================
+  //--------------------------------------------------
+  // Khoảng ngày tạo
+  //--------------------------------------------------
 
   const start = new Date();
-
-  start.setHours(0,0,0,0);
-
+  start.setHours(0, 0, 0, 0);
 
   const end = new Date(start);
-
-  end.setDate(
-    end.getDate()+29
-  );
-
-
-
+  end.setDate(end.getDate() + 29);
 
   const thuMapping = {
-
-    3:"T2",
-    4:"T3",
-    5:"T4",
-    6:"T5",
-    7:"T6",
-    8:"T7",
-    9:"CN"
-
+    3: "T2",
+    4: "T3",
+    5: "T4",
+    6: "T5",
+    7: "T6",
+    8: "T7",
+    9: "CN"
   };
 
+  let output = [];
+  let currentGio = "";
+  let currentMon = "";
 
+  //--------------------------------------------------
+  // Sinh Lesson Instance
+  //--------------------------------------------------
 
-  let output=[];
+  for (let r = 2; r <= values.length; r++) {
 
+    const gio = getMergedValue(tkbSheet, r, 1);
+    const mon = values[r - 1][1];
 
+    if (gio) currentGio = gio;
+    if (mon) currentMon = mon;
 
-  let currentGio="";
-  let currentMon="";
+    for (let c = 3; c <= 9; c++) {
 
+      const hvText = values[r - 1][c - 1];
 
+      if (!hvText) continue;
 
-  for(let r=2;r<=values.length;r++){
+      const thu = thuMapping[c];
 
-
-    // A merge
-    const gio =
-      getMergedValue(
-        tkbSheet,
-        r,
-        1
-      );
-
-
-    // B không merge
-    const mon =
-      values[r-1][1];
-
-
-
-    if(gio)
-      currentGio = gio;
-
-
-    if(mon)
-      currentMon = mon;
-
-
-
-
-    for(let c=3;c<=9;c++){
-
-
-      const hvText =
-        values[r-1][c-1];
-
-
-
-      if(!hvText)
-        continue;
-
-
-
-      const thu =
-        thuMapping[c];
-
-
-
-      const hocviens =
-        hvText
+      const hocviens = hvText
         .toString()
         .split("\n")
-        .map(x =>
-          x.replace("•","").trim()
-        )
+        .map(x => x.replace("•", "").trim())
         .filter(Boolean);
 
+      const dates = getDatesByWeekday(start, end, thu);
 
+      dates.forEach(date => {
 
-
-      const dates =
-        getDatesByWeekday(
-          start,
-          end,
-          thu
+        const dateKey = Utilities.formatDate(
+          date,
+          Session.getScriptTimeZone(),
+          "yyyyMMdd"
         );
 
+        hocviens.forEach(tenHV => {
 
+          const maHV = maHVMap[tenHV];
 
-
-      dates.forEach(date=>{
-
-
-        const dateKey =
-          Utilities.formatDate(
-            date,
-            "GMT+7",
-            "yyyyMMdd"
-          );
-
-
-
-        hocviens.forEach(hv=>{
-
-
-          /*
-            InstanceID:
-            ngày + thứ + giờ + môn + học viên
-          */
+          if (!maHV) {
+            Logger.log("Không tìm thấy Mã HV: " + tenHV);
+            return;
+          }
 
           const id =
-            dateKey
-            +"_"+thu
-            +"_"+currentGio
-            +"_"+currentMon
-            +"_"+hv;
+            `${dateKey}_${thu}_${currentGio}_${currentMon}_${maHV}`;
 
-
-
-          const cached =
-            statusCache[id];
-
-
+          const cached = statusCache[id];
 
           let status = "ACTIVE";
           let source = "TKB";
 
-
-          // Nếu đã có phiếu
-          if(cached){
-
-            status =
-              cached.status;
-
-            source =
-              cached.source;
-
+          if (cached) {
+            status = cached.status;
+            source = cached.source;
           }
 
-
-
           output.push([
-
             id,
-
             date,
-
             thu,
-
             currentGio,
-
             currentMon,
-
-            hv,
-
+            maHV,
+            tenHV,
             status,
-
             source
-
           ]);
-
-
 
         });
 
-
-
       });
-
-
 
     }
 
-
   }
 
+  //--------------------------------------------------
+  // Giữ các instance tạo bởi phiếu
+  //--------------------------------------------------
 
+  const outputIds = new Set(output.map(r => r[0]));
 
+  customInstances.forEach(r => {
 
-  // ============================
-  // Ghi lại
-  // ============================
+    if (!outputIds.has(r[0])) {
+      output.push(r);
+    }
 
+  });
+
+  //--------------------------------------------------
+  // Ghi dữ liệu
+  //--------------------------------------------------
 
   insSheet.clearContents();
 
-
-
-  insSheet
-  .getRange(
-    1,
-    1,
-    1,
-    8
-  )
-  .setValues([[
-
+  insSheet.getRange(1, 1, 1, 9).setValues([[
     "InstanceID",
     "Ngày",
     "Thứ",
     "Giờ",
     "Môn",
+    "Mã HV",
     "Học viên",
     "Schedule_Status",
     "Nguồn"
-
   ]]);
 
-
-
-  if(output.length){
-
+  if (output.length) {
 
     insSheet
-    .getRange(
-      2,
-      1,
-      output.length,
-      8
-    )
-    .setValues(output);
-
+      .getRange(2, 1, output.length, 9)
+      .setValues(output);
 
   }
-
 
 }
 
@@ -1182,16 +1273,10 @@ function getDatesByWeekday(start,end,thu){
 function hienThiLichHomNayNgayMai() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-
-  const tkbSheet =
-    ss.getSheetByName("THỜI KHÓA BIỂU");
-
-  const insSheet =
-    ss.getSheetByName("LESSON_INSTANCE");
-
+  const tkbSheet = ss.getSheetByName("THỜI KHÓA BIỂU");
+  const insSheet = ss.getSheetByName("LESSON_INSTANCE");
 
   if (!tkbSheet || !insSheet) return;
-
 
   // ====================
   // tạo cột Hôm nay / Mai
@@ -1207,13 +1292,10 @@ function hienThiLichHomNayNgayMai() {
     .getRange(1,startCol+1)
     .setValue("NGÀY MAI");
 
-
-
   const today =
     new Date();
 
   today.setHours(0,0,0,0);
-
 
   const tomorrow =
     new Date(today);
@@ -1222,54 +1304,43 @@ function hienThiLichHomNayNgayMai() {
     today.getDate()+1
   );
 
-
-
   const data =
     insSheet
       .getRange(
         2,
         1,
         insSheet.getLastRow()-1,
-        8
+        9
       )
       .getValues();
-
-
 
   const result = {
     today:{},
     tomorrow:{}
   };
 
-
-
   data.forEach(r=>{
-
-
     const [
       id,
       date,
       thu,
       gio,
       mon,
+      maHV,
       hv,
-      status
+      status,
+      nguon
     ] = r;
-
 
     // chỉ lấy lịch thực tế
     if(status !== "ACTIVE") return;
-
 
     const d =
       new Date(date);
 
     d.setHours(0,0,0,0);
 
-
-
     let target = null;
-
 
     if(
       d.getTime() === today.getTime()
@@ -1277,47 +1348,33 @@ function hienThiLichHomNayNgayMai() {
       target="today";
     }
 
-
     if(
       d.getTime() === tomorrow.getTime()
     ){
       target="tomorrow";
     }
 
-
     if(!target) return;
-
-
 
     const key =
       gio+"|"+mon;
-
-
 
     if(!result[target][key]){
       result[target][key]=[];
     }
 
-
     result[target][key]
       .push("• "+hv);
-
-
   });
-
-
 
   const lastRow =
     tkbSheet.getLastRow();
-
-
 
   // ====================
   // đi theo dòng TKB hiện tại
   // ====================
 
   for(let r=2;r<=lastRow;r++){
-
 
     const gio =
       getMergedValue(
@@ -1326,21 +1383,15 @@ function hienThiLichHomNayNgayMai() {
         1
       );
 
-
     const mon =
       tkbSheet
         .getRange(r,2)
         .getValue();
 
-
     if(!gio || !mon) continue;
-
-
 
     const key =
       gio+"|"+mon;
-
-
 
     tkbSheet
       .getRange(r,startCol)
@@ -1350,7 +1401,6 @@ function hienThiLichHomNayNgayMai() {
         : ""
       );
 
-
     tkbSheet
       .getRange(r,startCol+1)
       .setValue(
@@ -1358,10 +1408,7 @@ function hienThiLichHomNayNgayMai() {
         ? result.tomorrow[key].join("\n")
         : ""
       );
-
   }
-
-
 
   // copy format giống cột CN
   tkbSheet
@@ -1371,7 +1418,6 @@ function hienThiLichHomNayNgayMai() {
       SpreadsheetApp.CopyPasteType.PASTE_FORMAT,
       false
     );
-
 }
 
 function updateLessonStatus(instanceId, status, source = "TKB") {
@@ -1396,8 +1442,6 @@ function updateLessonStatus(instanceId, status, source = "TKB") {
 
     sheet.getRange(i + 1, col["Nguồn"] + 1)
       .setValue(source);
-
-    hienThiLichHomNayNgayMai();
 
     return true;
   }
@@ -1445,7 +1489,6 @@ function doPost(e) {
   }
 }
 
-
 function processPhieu(payload) {
 
   const ss = SpreadsheetApp.openById("1goQl0iqKg7gnKDw1TKlBmRRJVscp02j9DyGiKnP9LOA");
@@ -1454,147 +1497,302 @@ function processPhieu(payload) {
   const insSheet = ss.getSheetByName("LESSON_INSTANCE");
 
   if (!payload?.phieu_id) {
-    return { success: false, message: "Missing phieu_id" };
+    return {
+      success: false,
+      message: "Missing phieu_id"
+    };
   }
 
   const phieuData = phieuSheet.getDataRange().getValues();
   const insData = insSheet.getDataRange().getValues();
-  const col = getHeaderMap(insSheet);
+
+  const phieuCol = getHeaderMap(phieuSheet);
+  const instanceCol = getHeaderMap(insSheet);
 
   const rows = phieuData.slice(1);
-  const statusCol = 11; // K
+  const statusCol = phieuCol["Trạng thái"] + 1;
 
-  const phieuIndex = rows.findIndex(r => r[0] == payload.phieu_id);
+  const phieuIndex = rows.findIndex(
+    r => r[phieuCol["Phiếu ID"]] == payload.phieu_id
+  );
 
-  if (phieuIndex === -1) {
-    return { success: false, message: "Không tìm thấy phiếu" };
+  if (phieuIndex == -1) {
+    return {
+      success: false,
+      message: "Không tìm thấy phiếu"
+    };
   }
 
   const p = rows[phieuIndex];
 
-  if (p[10] !== "MỚI") {
-    return { success: false, message: "Phiếu không hợp lệ hoặc đã xử lý" };
+  if (p[phieuCol["Trạng thái"]] != "MỚI") {
+    return {
+      success: false,
+      message: "Phiếu đã xử lý"
+    };
   }
 
-  const hv = p[2];
-  const loai = p[3];
-  const phamVi = p[4];
-  const ngayCu = new Date(p[5]);
-  const ngayMoi = p[6] ? new Date(p[6]) : null;
-  const gio = p[7] ? String(p[7]).trim() : "";
-  const toiNgay = p[8] ? new Date(p[8]) : null;
+  const instanceId = p[phieuCol["Buổi học"]];
+  const maHV = String(p[phieuCol["Mã HV"]] || "").trim();
+
+  const maHVList = String(p[phieuCol["Danh sách mã HV"]] || "")
+    .split(" , ")
+    .map(s => s.trim())
+    .filter(Boolean);
+
+  const loai = p[phieuCol["Loại phiếu"]];
+  const phamVi = p[phieuCol["Phạm vi"]];
+  const ngayCu = new Date(p[phieuCol["Ngày học"]]);
+  const gioHoc = String(p[phieuCol["Giờ học"]] || "").trim();
+  const ngayMoi = p[phieuCol["Ngày mới"]]
+    ? new Date(p[phieuCol["Ngày mới"]])
+    : null;
+  const gioMoi = String(p[phieuCol["Giờ mới"]] || "").trim();
+  const monHoc = p[phieuCol["Môn"]];
+  const toiNgay = p[phieuCol["Tới ngày"]]
+    ? new Date(p[phieuCol["Tới ngày"]])
+    : null;
+
   let updated = false;
 
-  for (let i = 1; i < insData.length; i++) {
+  //--------------------------------------------------
+  // OFF CÁ NHÂN / ĐỔI LỊCH
+  //--------------------------------------------------
 
-    const row = insData[i];
+  let lessonRow = null;
 
-  if (loai === "OFF") {
+  if (phamVi == "CÁ NHÂN") {
 
-  if (phamVi === "CÁ NHÂN") {
+    // Có chọn buổi học -> lấy đúng instance
+    if (instanceId) {
 
-    if (row[col["Học viên"]] !== hv) continue;
-    const denNgay = toiNgay || ngayCu;
+      const lessonIndex = insData.findIndex(
+        r => r[instanceCol["InstanceID"]] == instanceId
+      );
 
-      const lessonDate = new Date(row[col["Ngày"]]);
+      if (lessonIndex == -1) {
 
-      if (lessonDate < ngayCu) continue;
+        phieuSheet
+          .getRange(phieuIndex + 2, statusCol)
+          .setValue("LỖI");
 
-      if (lessonDate > denNgay) continue;
+        return {
+          success: false,
+          message: "Không tìm thấy buổi học"
+        };
 
-      updated =
-        updateLessonStatus(
-          row[col["InstanceID"]],
-          "OFF",
-          payload.phieu_id
-        ) || updated;
-  }
+      }
 
-  else if (phamVi === "CA HỌC") {
+      lessonRow = insData[lessonIndex];
 
-    if (!sameDate(
-            new Date(row[col["Ngày"]]),
-            ngayCu
-          )) continue;
-
-      if (row[col["Giờ"]] !== gio) continue;
-
-      if (row[col["Schedule_Status"]] !== "ACTIVE")
-        continue;
-
-      updated =
-        updateLessonStatus(
-          row[col["InstanceID"]],
-          "OFF",
-          payload.phieu_id
-        ) || updated;
-
-  }
-
-}
-
-  if (loai === "ĐỔI LỊCH" && ngayMoi && gio) {
-    if (row[col["Học viên"]] !== hv) continue;
-    if (!sameDate(
-        new Date(row[col["Ngày"]]),
-        ngayCu
-      )) continue;
-
-    if (row[col["Schedule_Status"]] !== "ACTIVE")
-        continue;
-  // OFF buổi cũ
-  updated = updateLessonStatus(row[col["InstanceID"]], "OFF", payload.phieu_id) || updated;
-
-  // Clone đúng dòng đang duyệt
-  const newRow = [...row];
-
-  const newDate = new Date(ngayMoi);
-
-  newRow[col["Ngày"]] = newDate;
-
-  const weekdayMap = [
-    "CN",
-    "T2",
-    "T3",
-    "T4",
-    "T5",
-    "T6",
-    "T7"
-  ];
-
-  newRow[col["Thứ"]] = weekdayMap[newDate.getDay()];
-
-  const dateKey = Utilities.formatDate(
-    newDate,
-    Session.getScriptTimeZone(),
-    "yyyyMMdd"
-  );
-
-  newRow[col["Giờ"]] = gio;
-  const subject = newRow[col["Môn"]];
-  const student = newRow[col["Học viên"]];
-
-  newRow[col["InstanceID"]] =
-    `${dateKey}_${weekdayMap[newDate.getDay()]}_${gio}_${subject}_${student}`;
-
-  newRow[col["Schedule_Status"]] = "ACTIVE";
-  newRow[col["Nguồn"]] = payload.phieu_id;
-
-  insSheet.appendRow(newRow);
     }
+
+    // Không chọn buổi học -> THÊM BUỔI
+    else {
+
+      const lessonIndex = insData.findIndex(r =>
+        r[instanceCol["Mã HV"]] == maHV &&
+        r[instanceCol["Schedule_Status"]] == "ACTIVE"
+      );
+
+      if (lessonIndex == -1) {
+
+        phieuSheet
+          .getRange(phieuIndex + 2, statusCol)
+          .setValue("LỖI");
+
+        return {
+          success: false,
+          message: "Không tìm thấy lịch của học viên"
+        };
+
+      }
+
+      lessonRow = insData[lessonIndex];
+
+    }
+
   }
 
-  const resultStatus = updated ? "ĐÃ XỬ LÝ" : "LỖI";
+  //--------------------------------------------------
+  // OFF
+  //--------------------------------------------------
 
-  phieuSheet.getRange(phieuIndex + 2, statusCol).setValue(resultStatus);
+  if (loai == "OFF") {
+
+    //---------------- OFF CÁ NHÂN ----------------
+
+    if (phamVi == "CÁ NHÂN") {
+
+      // OFF 1 BUỔI
+      if (!toiNgay) {
+
+        updated =
+          updateLessonStatus(
+            lessonRow[instanceCol["InstanceID"]],
+            "OFF",
+            payload.phieu_id
+          ) || updated;
+
+      }
+
+      // OFF DÀI
+      else {
+
+        const studentMaHV = lessonRow[instanceCol["Mã HV"]];
+        const startDate = new Date(
+          lessonRow[instanceCol["Ngày"]]
+        );
+
+        for (let i = 1; i < insData.length; i++) {
+
+          const row = insData[i];
+
+          if (row[instanceCol["Mã HV"]] != studentMaHV)
+            continue;
+
+          if (row[instanceCol["Môn"]] != monHoc)
+            continue;
+
+          if (row[instanceCol["Schedule_Status"]] != "ACTIVE")
+            continue;
+
+          const lessonDate =
+            new Date(row[instanceCol["Ngày"]]);
+
+          if (lessonDate < startDate)
+            continue;
+
+          if (lessonDate > toiNgay)
+            continue;
+
+          updated =
+            updateLessonStatus(
+              row[instanceCol["InstanceID"]],
+              "OFF",
+              payload.phieu_id
+            ) || updated;
+
+        }
+
+      }
+
+    }
+
+    //---------------- OFF CA HỌC ----------------
+
+    else if (phamVi == "CA HỌC") {
+
+      for (let i = 1; i < insData.length; i++) {
+
+        const row = insData[i];
+
+        if (!sameDate(
+          new Date(row[instanceCol["Ngày"]]),
+          ngayCu
+        ))
+          continue;
+
+        if (row[instanceCol["Giờ"]] != gioHoc)
+          continue;
+        if (row[instanceCol["Môn"]] != monHoc)
+          continue;
+
+        if (row[instanceCol["Schedule_Status"]] != "ACTIVE")
+          continue;
+
+        if (maHVList.length && !maHVList.includes(String(row[instanceCol["Mã HV"]]).trim())) {
+          continue;
+        }
+
+        updated =
+          updateLessonStatus(
+            row[instanceCol["InstanceID"]],
+            "OFF",
+            payload.phieu_id
+          ) || updated;
+
+      }
+
+    }
+
+  }
+
+  //--------------------------------------------------
+  // ĐỔI LỊCH
+  //--------------------------------------------------
+
+  if (loai == "ĐỔI LỊCH" && ngayMoi && gioMoi) {
+
+    if (instanceId) {
+
+      updateLessonStatus(
+        instanceId,
+        "OFF",
+        payload.phieu_id
+      );
+
+    }
+
+    const newRow = [...lessonRow];
+
+    const newDate = new Date(ngayMoi);
+
+    const weekdayMap = [
+      "CN",
+      "T2",
+      "T3",
+      "T4",
+      "T5",
+      "T6",
+      "T7"
+    ];
+
+    newRow[instanceCol["Ngày"]] = newDate;
+
+    newRow[instanceCol["Thứ"]] =
+      weekdayMap[newDate.getDay()];
+
+    newRow[instanceCol["Giờ"]] =
+      gioMoi;
+
+    const dateKey = Utilities.formatDate(
+      newDate,
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+    newRow[instanceCol["InstanceID"]] =
+      `${dateKey}_${weekdayMap[newDate.getDay()]}_${gioMoi}_${newRow[instanceCol["Môn"]]}_${newRow[instanceCol["Mã HV"]]}`;
+
+    newRow[instanceCol["Schedule_Status"]] =
+      "ACTIVE";
+
+    newRow[instanceCol["Nguồn"]] =
+      payload.phieu_id;
+
+    insSheet.appendRow(newRow);
+    updated = true;
+  }
+
+  //--------------------------------------------------
+
+  const resultStatus =
+    updated ? "ĐÃ XỬ LÝ" : "LỖI";
+
+  phieuSheet
+    .getRange(phieuIndex + 2, statusCol)
+    .setValue(resultStatus);
+
   hienThiLichHomNayNgayMai();
+
   return {
     success: updated,
     phieu_id: payload.phieu_id,
     message: resultStatus
   };
-}
 
+}
 
 // helper
 function sameDate(d1, d2) {
@@ -1640,7 +1838,9 @@ function removeAttendanceTriggers() {
 
   const handlers = [
     "scheduleTodayAttendance",
-    "autoAttendance"
+    "autoAttendanceBySlot",
+    "autoAttendanceDaily",
+    "hienThiLichHomNayNgayMai"
   ];
 
   ScriptApp.getProjectTriggers().forEach(trigger => {
@@ -1657,6 +1857,31 @@ function createAttendanceTriggers() {
 
   removeAttendanceTriggers();
 
+  // Điểm danh cuối ngày
+  ScriptApp.newTrigger("autoAttendanceDaily")
+    .timeBased()
+    .everyDays(1)
+    .atHour(22)
+    .nearMinute(0)
+    .create();
+
+  // Refresh lịch Hôm nay/Ngày mai đầu ngày
+  ScriptApp.newTrigger("hienThiLichHomNayNgayMai")
+    .timeBased()
+    .everyDays(1)
+    .atHour(0)
+    .nearMinute(5)
+    .create();
+
+  // Refresh ngay lần đầu khi bật tính năng
+  hienThiLichHomNayNgayMai();
+
+}
+
+function createAttendanceTriggersBySlot() {
+
+  removeAttendanceTriggers();
+
   ScriptApp.newTrigger("scheduleTodayAttendance")
     .timeBased()
     .everyDays(1)
@@ -1664,16 +1889,14 @@ function createAttendanceTriggers() {
     .nearMinute(5)
     .create();
 
-  // Tạo luôn trigger của hôm nay
   scheduleTodayAttendance();
 
 }
 
 function scheduleTodayAttendance() {
 
-  // Xóa toàn bộ trigger autoAttendance cũ
   ScriptApp.getProjectTriggers().forEach(trigger => {
-    if (trigger.getHandlerFunction() === "autoAttendance") {
+    if (trigger.getHandlerFunction() === "autoAttendanceBySlot") {
       ScriptApp.deleteTrigger(trigger);
     }
   });
@@ -1685,6 +1908,7 @@ function scheduleTodayAttendance() {
     { hour: 9, minute: 30 },
     { hour: 13, minute: 0 },
     { hour: 14, minute: 30 },
+    { hour: 16, minute: 0 },
     { hour: 17, minute: 30 },
     { hour: 19, minute: 0 }
   ];
@@ -1702,17 +1926,18 @@ function scheduleTodayAttendance() {
 
     if (triggerTime <= new Date()) return;
 
-    ScriptApp.newTrigger("autoAttendance")
+    ScriptApp.newTrigger("autoAttendanceBySlot")
       .timeBased()
       .at(triggerTime)
       .create();
 
   });
+
   hienThiLichHomNayNgayMai();
 
 }
 
-function autoAttendance(testDate = null) {
+function autoAttendanceBySlot() {
 
   const ss = SpreadsheetApp.getActiveSpreadsheet();
 
@@ -1722,26 +1947,20 @@ function autoAttendance(testDate = null) {
   const col = getHeaderMap(lessonSheet);
 
   //--------------------------------------------------
-  // Xác định ca học từ thời điểm trigger
+  // Xác định ca học
   //--------------------------------------------------
 
-  const now = testDate || new Date();
+  const now = new Date();
 
-  const timeKey = Utilities.formatDate(
-    now,
-    Session.getScriptTimeZone(),
-    "HH:mm"
-  );
-
-  const targetSlot = SLOT_MAP[timeKey];
+  const targetSlot = getTargetSlot(now);
 
   if (!targetSlot) {
-    Logger.log("Không xác định được ca học.");
+    Logger.log("Không nằm trong khoảng trigger.");
     return;
   }
 
   //--------------------------------------------------
-  // Sheet điểm danh tháng hiện tại
+  // Sheet điểm danh
   //--------------------------------------------------
 
   const month = now.getMonth() + 1;
@@ -1754,20 +1973,20 @@ function autoAttendance(testDate = null) {
   const dayColumn = 6 + now.getDate();
 
   //--------------------------------------------------
-  // Map học viên -> dòng
+  // Map Mã HV -> dòng
   //--------------------------------------------------
 
   const lastRow = attendanceSheet.getLastRow();
 
-  const names = attendanceSheet
-    .getRange(2, 2, lastRow - 1, 1)
+  const ids = attendanceSheet
+    .getRange(2, 1, lastRow - 1, 1)
     .getValues()
     .flat();
 
   const rowMap = {};
 
-  names.forEach((name, i) => {
-    if (name) rowMap[name] = i + 2;
+  ids.forEach((id, i) => {
+    if (id) rowMap[String(id).trim()] = i + 2;
   });
 
   //--------------------------------------------------
@@ -1804,13 +2023,15 @@ function autoAttendance(testDate = null) {
 
     if (row[col["Schedule_Status"]] !== "ACTIVE") continue;
 
-    const student = row[col["Học viên"]];
+    const maHV = String(row[col["Mã HV"]]).trim();
 
     const subject = row[col["Môn"]];
 
-    const teacher = SUBJECT_TEACHERS[String(subject).toLowerCase()] || SUBJECT_TEACHERS.piano;
+    const teacher =
+      SUBJECT_TEACHERS[String(subject)]
+      || SUBJECT_TEACHERS.Piano;
 
-    const attendanceRow = rowMap[student];
+    const attendanceRow = rowMap[maHV];
 
     if (!attendanceRow) continue;
 
@@ -1837,6 +2058,102 @@ function autoAttendance(testDate = null) {
   );
 
   tongHopDiemDanh();
+
+}
+
+function autoAttendanceDaily() {
+
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  const lessonSheet = ss.getSheetByName("LESSON_INSTANCE");
+  if (!lessonSheet) return;
+
+  const col = getHeaderMap(lessonSheet);
+
+  const now = new Date();
+
+  const month = now.getMonth() + 1;
+
+  const attendanceSheet =
+    ss.getSheetByName(`ĐIỂM DANH T${month}`);
+
+  if (!attendanceSheet) return;
+
+  const dayColumn = 6 + now.getDate();
+
+  const lastRow = attendanceSheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const ids = attendanceSheet
+    .getRange(2, 1, lastRow - 1, 1)
+    .getValues()
+    .flat();
+
+  const rowMap = {};
+
+  ids.forEach((id, i) => {
+    if (id) rowMap[String(id).trim()] = i + 2;
+  });
+
+  const todayKey = Utilities.formatDate(
+    now,
+    Session.getScriptTimeZone(),
+    "yyyyMMdd"
+  );
+
+  if (lessonSheet.getLastRow() < 2) return;
+
+  const values = lessonSheet.getDataRange().getValues();
+
+  let count = 0;
+
+  for (let i = 1; i < values.length; i++) {
+
+    const row = values[i];
+
+    const lessonDate = Utilities.formatDate(
+      new Date(row[col["Ngày"]]),
+      Session.getScriptTimeZone(),
+      "yyyyMMdd"
+    );
+
+    if (lessonDate !== todayKey) continue;
+    if (row[col["Schedule_Status"]] !== "ACTIVE") continue;
+
+    const maHV = String(row[col["Mã HV"]]).trim();
+    const subject = row[col["Môn"]];
+
+    const teacher =
+      SUBJECT_TEACHERS[String(subject)]
+      || SUBJECT_TEACHERS.Piano;
+
+    const attendanceRow = rowMap[maHV];
+
+    if (!attendanceRow) continue;
+
+    const cell = attendanceSheet.getRange(
+      attendanceRow,
+      dayColumn
+    );
+
+    if (cell.getDisplayValue() == "1") continue;
+
+    cell
+      .setValue(1)
+      .setFontColor(
+        TEACHER_COLORS[teacher] || "#000000"
+      );
+
+    count++;
+
+  }
+
+  Logger.log(
+    `AutoAttendance cuối ngày: ${count} học viên`
+  );
+
+  tongHopDiemDanh();
+
 }
 
 function getHeaderMap(sheet) {
@@ -1857,7 +2174,7 @@ function getHeaderMap(sheet) {
 
 function huyPhieu(payload) {
 
-  const ss = SpreadsheetApp.getActive();
+  const ss = SpreadsheetApp.openById("1goQl0iqKg7gnKDw1TKlBmRRJVscp02j9DyGiKnP9LOA");
 
   const lessonSheet = ss.getSheetByName("LESSON_INSTANCE");
   const phieuSheet = ss.getSheetByName("PHIẾU LỊCH HỌC");
@@ -1875,25 +2192,20 @@ function huyPhieu(payload) {
   const lessonData = lessonSheet.getDataRange().getValues();
   const phieuData = phieuSheet.getDataRange().getValues();
 
-  if (p[phieuCol["Trạng thái"]] !== "HUỶ") {
-    return {
-      success: false,
-      message: "Không phải yêu cầu hủy"
-    };
-}
   //--------------------------------------------------
   // Tìm phiếu
   //--------------------------------------------------
 
   let phieuRow = -1;
   let loai = "";
-
+  let p;
   for (let i = 1; i < phieuData.length; i++) {
 
     if (phieuData[i][phieuCol["Phiếu ID"]] == payload.phieu_id) {
 
       phieuRow = i + 1;
-      loai = phieuData[i][phieuCol["Loại phiếu"]];
+      p = phieuData[i]
+      loai = p[phieuCol["Loại phiếu"]];
       break;
 
     }
@@ -1905,7 +2217,7 @@ function huyPhieu(payload) {
       message: "Không tìm thấy phiếu"
     };
   }
-
+  
   //--------------------------------------------------
   // ĐỔI LỊCH
   // Xóa instance mới
@@ -1919,15 +2231,10 @@ function huyPhieu(payload) {
       if (lessonData[i][lessonCol["Nguồn"]] != payload.phieu_id)
         continue;
 
-      const status =
-        lessonData[i][lessonCol["Schedule_Status"]];
+      const oldInstanceId = p[phieuCol["Buổi học"]];
+      const currentInstanceId = lessonData[i][lessonCol["InstanceID"]];
 
-      if (status === "ACTIVE") {
-
-        lessonSheet.deleteRow(i + 1);
-
-      } else {
-
+      if (currentInstanceId === oldInstanceId && lessonData[i][lessonCol["Schedule_Status"]] === "OFF") {
         lessonSheet.getRange(
           i + 1,
           lessonCol["Schedule_Status"] + 1
@@ -1937,11 +2244,10 @@ function huyPhieu(payload) {
           i + 1,
           lessonCol["Nguồn"] + 1
         ).setValue("TKB");
-
+      } else {
+        lessonSheet.deleteRow(i + 1);
       }
-
     }
-
   }
 
   //--------------------------------------------------
@@ -1949,8 +2255,7 @@ function huyPhieu(payload) {
   //--------------------------------------------------
 
   else {
-
-    for (let i = 1; i < lessonData.length; i++) {
+    for (let i = lessonData.length - 1; i >= 1; i--) {
 
       if (lessonData[i][lessonCol["Nguồn"]] != payload.phieu_id)
         continue;
@@ -1966,7 +2271,6 @@ function huyPhieu(payload) {
       ).setValue("TKB");
 
     }
-
   }
 
   //--------------------------------------------------
@@ -1986,14 +2290,6 @@ function huyPhieu(payload) {
   };
 
 }
-
-// function test16h() {
-
-//   autoAttendance(
-//     new Date(2026, 5, 30, 17, 30)
-//   );
-
-// }
 
 
 
